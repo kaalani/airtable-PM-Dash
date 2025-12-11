@@ -1,84 +1,94 @@
-import React, { useState, useCallback } from 'react';
-import { initializeBlock, useBase, useRecords, useSession, CellRenderer, useCustomProperties } from '@airtable/blocks/interface/ui';
-import { FieldType } from '@airtable/blocks/interface/models';
+import React, { useState, useMemo } from 'react';
+import { initializeBlock, useBase, useRecords, useSession, CellRenderer } from '@airtable/blocks/interface/ui';
 
-function getCustomProperties(base) {
-    const podTable = base.getTableByIdIfExists('tbl4P2UbcOfOchYII');
-    if (!podTable) return [];
-
-    const productManagerField = podTable.getFieldIfExists('fldDWMqB3DICxQGxx');
-    
-    return [
-        {
-            key: 'filterByProductManager',
-            label: 'Filter by Product Manager',
-            type: 'boolean',
-            defaultValue: true,
-        },
-        {
-            key: 'selectedProductManager',
-            label: 'Product Manager',
-            type: 'field',
-            table: podTable,
-            shouldFieldBeAllowed: (field) => field.config.type === FieldType.SINGLE_COLLABORATOR,
-            defaultValue: productManagerField,
-        },
-    ];
-}
+// Field IDs
+const POD_TABLE_ID = 'tbl4P2UbcOfOchYII';
+const POD_NAME_FIELD_ID = 'fldud9Mnj0x1Nhj21';
+const PRODUCT_MANAGER_FIELD_ID = 'fldDWMqB3DICxQGxx';
+const SUMMARY_FIELD_ID = 'fldt4ZgCEz8OCaa2E';
 
 function PodMonthlySummaryApp() {
     const base = useBase();
     const session = useSession();
     const currentUser = session.currentUser;
-    
-    const { customPropertyValueByKey, errorState } = useCustomProperties(getCustomProperties);
 
-    const podTable = base.getTableByIdIfExists('tbl4P2UbcOfOchYII');
+    const podTable = base.getTableByIdIfExists(POD_TABLE_ID);
     const allPods = useRecords(podTable || base.tables[0]);
 
-    const filterByProductManager = customPropertyValueByKey.filterByProductManager;
-    const selectedProductManagerField = customPropertyValueByKey.selectedProductManager;
+    // Get fields
+    const podNameField = podTable?.getFieldIfExists(POD_NAME_FIELD_ID);
+    const productManagerField = podTable?.getFieldIfExists(PRODUCT_MANAGER_FIELD_ID);
+    const summaryField = podTable?.getFieldIfExists(SUMMARY_FIELD_ID);
 
+    // Filter states - default PM filter to 'current_user'
+    const [pmFilter, setPmFilter] = useState('current_user'); // 'all', 'current_user', or a specific user ID
+    const [podFilter, setPodFilter] = useState('all'); // 'all' or a specific pod ID
     const [selectedPodId, setSelectedPodId] = useState(null);
 
-    const filteredPods = React.useMemo(() => {
+    // Get unique PMs from all pods for the dropdown
+    const uniquePMs = useMemo(() => {
+        if (!allPods || !productManagerField) return [];
+        const pmMap = new Map();
+        allPods.forEach(pod => {
+            const pmValue = pod.getCellValue(productManagerField);
+            if (pmValue && pmValue.id) {
+                pmMap.set(pmValue.id, { id: pmValue.id, name: pmValue.name || pmValue.email || 'Unknown' });
+            }
+        });
+        return Array.from(pmMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    }, [allPods, productManagerField]);
+
+    // Get unique pod names for the dropdown
+    const uniquePodNames = useMemo(() => {
+        if (!allPods || !podNameField) return [];
+        const podList = allPods.map(pod => ({
+            id: pod.id,
+            name: pod.getCellValueAsString(podNameField) || 'Unnamed Pod'
+        }));
+        return podList.sort((a, b) => a.name.localeCompare(b.name));
+    }, [allPods, podNameField]);
+
+    // Filter pods based on both PM and Pod filters
+    const filteredPods = useMemo(() => {
         if (!podTable || !allPods) return [];
 
-        if (!filterByProductManager || !selectedProductManagerField) {
-            return allPods;
-        }
-
         return allPods.filter(pod => {
-            const pmValue = pod.getCellValue(selectedProductManagerField);
-            if (!pmValue) return false;
-            
-            if (currentUser && currentUser.id === pmValue.id) {
-                return true;
+            // PM filter
+            if (pmFilter !== 'all' && productManagerField) {
+                const pmValue = pod.getCellValue(productManagerField);
+                if (pmFilter === 'current_user') {
+                    if (!pmValue || !currentUser || pmValue.id !== currentUser.id) {
+                        return false;
+                    }
+                } else {
+                    // Specific PM selected
+                    if (!pmValue || pmValue.id !== pmFilter) {
+                        return false;
+                    }
+                }
             }
-            
+
+            // Pod filter
+            if (podFilter !== 'all') {
+                if (pod.id !== podFilter) {
+                    return false;
+                }
+            }
+
             return true;
         });
-    }, [allPods, podTable, filterByProductManager, selectedProductManagerField, currentUser]);
+    }, [allPods, podTable, pmFilter, podFilter, productManagerField, currentUser]);
 
+    // Auto-select first pod when filtered list changes
     React.useEffect(() => {
-        if (filteredPods.length > 0 && !selectedPodId) {
+        if (filteredPods.length > 0 && (!selectedPodId || !filteredPods.find(p => p.id === selectedPodId))) {
             setSelectedPodId(filteredPods[0].id);
+        } else if (filteredPods.length === 0) {
+            setSelectedPodId(null);
         }
     }, [filteredPods, selectedPodId]);
 
     const selectedPod = filteredPods.find(pod => pod.id === selectedPodId) || filteredPods[0];
-
-    if (errorState) {
-        return (
-            <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-gray-800 p-8">
-                <div className="bg-white dark:bg-gray-700 rounded-lg shadow-md p-8 max-w-md">
-                    <p className="text-gray-900 dark:text-gray-100">
-                        Error loading custom properties. Please check your configuration.
-                    </p>
-                </div>
-            </div>
-        );
-    }
 
     if (!podTable) {
         return (
@@ -92,71 +102,89 @@ function PodMonthlySummaryApp() {
         );
     }
 
-    if (!selectedProductManagerField) {
-        return (
-            <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-gray-800 p-8">
-                <div className="bg-white dark:bg-gray-700 rounded-lg shadow-md p-8 max-w-md">
-                    <p className="text-gray-900 dark:text-gray-100 font-semibold mb-4">
-                        Configuration Required
-                    </p>
-                    <p className="text-gray-600 dark:text-gray-300">
-                        Please configure the Product Manager field in the properties panel to filter pods.
-                    </p>
-                </div>
-            </div>
-        );
-    }
-
-    const podNameField = podTable.getFieldIfExists('fldud9Mnj0x1Nhj21');
-    const summaryField = podTable.getFieldIfExists('fldt4ZgCEz8OCaa2E');
-
-    if (filteredPods.length === 0) {
-        return (
-            <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-gray-800 p-8">
-                <div className="bg-white dark:bg-gray-700 rounded-lg shadow-md p-8 max-w-md text-center">
-                    <p className="text-gray-900 dark:text-gray-100 font-semibold mb-2">
-                        No Pods Found
-                    </p>
-                    <p className="text-gray-600 dark:text-gray-300">
-                        {filterByProductManager 
-                            ? "No pods found where you are the Product Manager."
-                            : "No pods available in the table."}
-                    </p>
-                </div>
-            </div>
-        );
-    }
+    // Dropdown styles
+    const selectStyle = "w-full px-3 py-2 bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded-md text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 
     return (
         <div className="flex h-screen bg-gray-50 dark:bg-gray-800">
             <div className="w-80 bg-white dark:bg-gray-700 border-r border-gray-200 dark:border-gray-600 overflow-y-auto">
                 <div className="p-6 border-b border-gray-200 dark:border-gray-600">
                     <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                        My Pods
+                        Pod Summary
                     </h2>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                         {filteredPods.length} {filteredPods.length === 1 ? 'pod' : 'pods'}
                     </p>
                 </div>
+
+                {/* Filter Controls */}
+                <div className="p-4 border-b border-gray-200 dark:border-gray-600 space-y-4">
+                    {/* PM Filter */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Product Manager
+                        </label>
+                        <select
+                            value={pmFilter}
+                            onChange={(e) => setPmFilter(e.target.value)}
+                            className={selectStyle}
+                        >
+                            <option value="current_user">My Pods</option>
+                            <option value="all">All PMs</option>
+                            {uniquePMs.map(pm => (
+                                <option key={pm.id} value={pm.id}>{pm.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Pod Filter */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Pod
+                        </label>
+                        <select
+                            value={podFilter}
+                            onChange={(e) => setPodFilter(e.target.value)}
+                            className={selectStyle}
+                        >
+                            <option value="all">All Pods</option>
+                            {uniquePodNames.map(pod => (
+                                <option key={pod.id} value={pod.id}>{pod.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                {/* Pod List */}
                 <div className="p-4 space-y-2">
-                    {filteredPods.map(pod => {
-                        const isSelected = pod.id === selectedPodId;
-                        const podName = podNameField ? pod.getCellValueAsString(podNameField) : 'Unnamed Pod';
-                        
-                        return (
-                            <button
-                                key={pod.id}
-                                onClick={() => setSelectedPodId(pod.id)}
-                                className={`w-full text-left px-4 py-3 rounded-md transition-colors ${
-                                    isSelected
-                                        ? 'bg-blue-blue text-white'
-                                        : 'bg-gray-50 dark:bg-gray-600 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-500'
-                                }`}
-                            >
-                                <div className="font-medium">{podName}</div>
-                            </button>
-                        );
-                    })}
+                    {filteredPods.length === 0 ? (
+                        <div className="text-center py-4">
+                            <p className="text-gray-500 dark:text-gray-400 text-sm">
+                                {pmFilter === 'current_user'
+                                    ? "No pods found where you are the Product Manager."
+                                    : "No pods match the current filters."}
+                            </p>
+                        </div>
+                    ) : (
+                        filteredPods.map(pod => {
+                            const isSelected = pod.id === selectedPodId;
+                            const podName = podNameField ? pod.getCellValueAsString(podNameField) : 'Unnamed Pod';
+
+                            return (
+                                <button
+                                    key={pod.id}
+                                    onClick={() => setSelectedPodId(pod.id)}
+                                    className={`w-full text-left px-4 py-3 rounded-md transition-colors ${
+                                        isSelected
+                                            ? 'bg-blue-500 text-white'
+                                            : 'bg-gray-50 dark:bg-gray-600 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-500'
+                                    }`}
+                                >
+                                    <div className="font-medium">{podName}</div>
+                                </button>
+                            );
+                        })
+                    )}
                 </div>
             </div>
 
