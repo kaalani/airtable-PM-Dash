@@ -22,8 +22,12 @@ function PodMonthlySummaryApp() {
 
     // Filter states - default PM filter to 'current_user'
     const [pmFilter, setPmFilter] = useState('current_user'); // 'all', 'current_user', or a specific user ID
-    const [podFilter, setPodFilter] = useState('all'); // 'all' or a specific pod ID
     const [selectedPodId, setSelectedPodId] = useState(null);
+
+    // Editing states
+    const [isEditing, setIsEditing] = useState(false);
+    const [editedSummary, setEditedSummary] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
 
     // Get unique PMs from all pods for the dropdown
     const uniquePMs = useMemo(() => {
@@ -38,17 +42,7 @@ function PodMonthlySummaryApp() {
         return Array.from(pmMap.values()).sort((a, b) => a.name.localeCompare(b.name));
     }, [allPods, productManagerField]);
 
-    // Get unique pod names for the dropdown
-    const uniquePodNames = useMemo(() => {
-        if (!allPods || !podNameField) return [];
-        const podList = allPods.map(pod => ({
-            id: pod.id,
-            name: pod.getCellValueAsString(podNameField) || 'Unnamed Pod'
-        }));
-        return podList.sort((a, b) => a.name.localeCompare(b.name));
-    }, [allPods, podNameField]);
-
-    // Filter pods based on both PM and Pod filters
+    // Filter pods based on PM filter
     const filteredPods = useMemo(() => {
         if (!podTable || !allPods) return [];
 
@@ -68,16 +62,9 @@ function PodMonthlySummaryApp() {
                 }
             }
 
-            // Pod filter
-            if (podFilter !== 'all') {
-                if (pod.id !== podFilter) {
-                    return false;
-                }
-            }
-
             return true;
         });
-    }, [allPods, podTable, pmFilter, podFilter, productManagerField, currentUser]);
+    }, [allPods, podTable, pmFilter, productManagerField, currentUser]);
 
     // Auto-select first pod when filtered list changes
     React.useEffect(() => {
@@ -87,6 +74,46 @@ function PodMonthlySummaryApp() {
             setSelectedPodId(null);
         }
     }, [filteredPods, selectedPodId]);
+
+    // Reset editing state when selected pod changes
+    React.useEffect(() => {
+        setIsEditing(false);
+        setEditedSummary('');
+    }, [selectedPodId]);
+
+    // Start editing
+    const handleStartEdit = () => {
+        if (selectedPod && summaryField) {
+            const currentSummary = selectedPod.getCellValueAsString(summaryField) || '';
+            setEditedSummary(currentSummary);
+            setIsEditing(true);
+        }
+    };
+
+    // Cancel editing
+    const handleCancelEdit = () => {
+        setIsEditing(false);
+        setEditedSummary('');
+    };
+
+    // Save changes
+    const handleSaveEdit = async () => {
+        if (!selectedPod || !summaryField || !podTable) return;
+
+        setIsSaving(true);
+        try {
+            await podTable.updateRecordAsync(selectedPod.id, {
+                [summaryField.id]: editedSummary
+            });
+            setIsEditing(false);
+            setEditedSummary('');
+        } catch (error) {
+            console.error('Error saving summary:', error);
+            alert('Failed to save summary. Please try again.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
 
     const selectedPod = filteredPods.find(pod => pod.id === selectedPodId) || filteredPods[0];
 
@@ -106,117 +133,143 @@ function PodMonthlySummaryApp() {
     const selectStyle = "w-full px-3 py-2 bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded-md text-gray-900 dark:text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500";
 
     return (
-        <div className="flex h-screen bg-gray-50 dark:bg-gray-800">
-            <div className="w-80 bg-white dark:bg-gray-700 border-r border-gray-200 dark:border-gray-600 overflow-y-auto">
-                <div className="p-6 border-b border-gray-200 dark:border-gray-600">
-                    <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                        Pod Summary
-                    </h2>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                        {filteredPods.length} {filteredPods.length === 1 ? 'pod' : 'pods'}
-                    </p>
-                </div>
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-800">
+            {/* Header with Filters */}
+            <div className="bg-white dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600 sticky top-0 z-10">
+                <div className="px-6 py-4">
+                    <div className="flex flex-wrap items-center gap-4">
+                        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                            Pod Summary
+                        </h1>
 
-                {/* Filter Controls */}
-                <div className="p-4 border-b border-gray-200 dark:border-gray-600 space-y-4">
-                    {/* PM Filter */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Product Manager
-                        </label>
-                        <select
-                            value={pmFilter}
-                            onChange={(e) => setPmFilter(e.target.value)}
-                            className={selectStyle}
-                        >
-                            <option value="current_user">My Pods</option>
-                            <option value="all">All PMs</option>
-                            {uniquePMs.map(pm => (
-                                <option key={pm.id} value={pm.id}>{pm.name}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    {/* Pod Filter */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Pod
-                        </label>
-                        <select
-                            value={podFilter}
-                            onChange={(e) => setPodFilter(e.target.value)}
-                            className={selectStyle}
-                        >
-                            <option value="all">All Pods</option>
-                            {uniquePodNames.map(pod => (
-                                <option key={pod.id} value={pod.id}>{pod.name}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-
-                {/* Pod List */}
-                <div className="p-4 space-y-2">
-                    {filteredPods.length === 0 ? (
-                        <div className="text-center py-4">
-                            <p className="text-gray-500 dark:text-gray-400 text-sm">
-                                {pmFilter === 'current_user'
-                                    ? "No pods found where you are the Product Manager."
-                                    : "No pods match the current filters."}
-                            </p>
+                        {/* PM Filter */}
+                        <div className="flex items-center gap-2">
+                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                PM:
+                            </label>
+                            <select
+                                value={pmFilter}
+                                onChange={(e) => setPmFilter(e.target.value)}
+                                className={selectStyle}
+                                style={{ width: 'auto', minWidth: '150px' }}
+                            >
+                                <option value="current_user">My Pods</option>
+                                <option value="all">All PMs</option>
+                                {uniquePMs.map(pm => (
+                                    <option key={pm.id} value={pm.id}>{pm.name}</option>
+                                ))}
+                            </select>
                         </div>
-                    ) : (
-                        filteredPods.map(pod => {
-                            const isSelected = pod.id === selectedPodId;
-                            const podName = podNameField ? pod.getCellValueAsString(podNameField) : 'Unnamed Pod';
 
-                            return (
-                                <button
-                                    key={pod.id}
-                                    onClick={() => setSelectedPodId(pod.id)}
-                                    className={`w-full text-left px-4 py-3 rounded-md transition-colors ${
-                                        isSelected
-                                            ? 'bg-blue-500 text-white'
-                                            : 'bg-gray-50 dark:bg-gray-600 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-500'
-                                    }`}
-                                >
-                                    <div className="font-medium">{podName}</div>
-                                </button>
-                            );
-                        })
-                    )}
+                        {/* Pod Filter */}
+                        <div className="flex items-center gap-2">
+                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Pod:
+                            </label>
+                            <select
+                                value={selectedPodId || ''}
+                                onChange={(e) => setSelectedPodId(e.target.value || null)}
+                                className={selectStyle}
+                                style={{ width: 'auto', minWidth: '200px' }}
+                            >
+                                {filteredPods.length === 0 ? (
+                                    <option value="">No pods available</option>
+                                ) : (
+                                    filteredPods.map(pod => {
+                                        const podName = podNameField ? pod.getCellValueAsString(podNameField) : 'Unnamed Pod';
+                                        return (
+                                            <option key={pod.id} value={pod.id}>{podName}</option>
+                                        );
+                                    })
+                                )}
+                            </select>
+                        </div>
+
+                        <span className="text-sm text-gray-500 dark:text-gray-400">
+                            {filteredPods.length} {filteredPods.length === 1 ? 'pod' : 'pods'}
+                        </span>
+                    </div>
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto">
+            {/* Full Width Summary Content */}
+            <div className="p-6">
                 {selectedPod ? (
-                    <div className="p-8">
-                        <div className="max-w-4xl mx-auto">
-                            <div className="bg-white dark:bg-gray-700 rounded-lg shadow-md p-8">
-                                <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-6">
-                                    {podNameField ? selectedPod.getCellValueAsString(podNameField) : 'Pod Summary'}
-                                </h1>
+                    <div className="bg-white dark:bg-gray-700 rounded-lg shadow-md p-8">
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+                                {podNameField ? selectedPod.getCellValueAsString(podNameField) : 'Pod Summary'}
+                            </h2>
+                            {summaryField && !isEditing && (
+                                <button
+                                    onClick={handleStartEdit}
+                                    className="px-4 py-2 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+                                >
+                                    Edit Summary
+                                </button>
+                            )}
+                        </div>
 
-                                {summaryField && selectedPod.getCellValue(summaryField) ? (
-                                    <div className="prose dark:prose-invert max-w-none">
-                                        <div className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap leading-relaxed">
-                                            <CellRenderer record={selectedPod} field={summaryField} />
+                        {summaryField ? (
+                            <div className="prose dark:prose-invert max-w-none">
+                                {isEditing ? (
+                                    <div className="space-y-4">
+                                        <textarea
+                                            value={editedSummary}
+                                            onChange={(e) => setEditedSummary(e.target.value)}
+                                            className="w-full h-96 px-4 py-3 bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-500 rounded-md text-gray-900 dark:text-gray-100 text-base focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                                            placeholder="Enter the pod summary..."
+                                            disabled={isSaving}
+                                        />
+                                        <div className="flex gap-3">
+                                            <button
+                                                onClick={handleSaveEdit}
+                                                disabled={isSaving}
+                                                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                            >
+                                                {isSaving ? 'Saving...' : 'Save'}
+                                            </button>
+                                            <button
+                                                onClick={handleCancelEdit}
+                                                disabled={isSaving}
+                                                className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                            >
+                                                Cancel
+                                            </button>
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="text-center py-12">
-                                        <p className="text-gray-500 dark:text-gray-400">
-                                            No monthly summary available for this pod.
-                                        </p>
+                                    <div>
+                                        {selectedPod.getCellValue(summaryField) ? (
+                                            <div className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap leading-relaxed">
+                                                <CellRenderer record={selectedPod} field={summaryField} />
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-12">
+                                                <p className="text-gray-500 dark:text-gray-400">
+                                                    No monthly summary available for this pod. Click "Edit Summary" to add one.
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>
-                        </div>
+                        ) : (
+                            <div className="text-center py-12">
+                                <p className="text-gray-500 dark:text-gray-400">
+                                    Summary field not found.
+                                </p>
+                            </div>
+                        )}
                     </div>
                 ) : (
-                    <div className="flex items-center justify-center h-full">
+                    <div className="flex items-center justify-center h-64">
                         <p className="text-gray-500 dark:text-gray-400">
-                            Select a pod to view its monthly summary
+                            {filteredPods.length === 0
+                                ? (pmFilter === 'current_user'
+                                    ? "No pods found where you are the Product Manager."
+                                    : "No pods match the current filters.")
+                                : "Select a pod to view its monthly summary"}
                         </p>
                     </div>
                 )}
